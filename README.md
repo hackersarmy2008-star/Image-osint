@@ -1,3 +1,4 @@
+
 # 🔎 Hardcore OSINT Image Analyzer
 
 > 🕵️ A powerful **image OSINT tool** that extracts metadata, GPS, hidden text, possible usernames,  
@@ -28,3 +29,6 @@
 git clone https://github.com/your-username/photo-osint.git
 cd photo-osint
 pip install -r requirements.txt
+pkg install tesseract -y
+pip install pillow pytesseract rich requests maigret
+python3 photo_osint.py
