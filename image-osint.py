@@ -183,7 +183,8 @@ def main():
     print("╰──────────────────────────────────────────────────────────────╯")
 
 if __name__ == "__main__":
-    main()    try:
+    main()    
+    try:
         image = Image.open(image_path)
         exif_data = {}
         info = image._getexif()
