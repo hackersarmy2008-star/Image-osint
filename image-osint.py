@@ -1,40 +1,189 @@
 import os
 import re
-import time
+import sys
 import asyncio
 import webbrowser
-import requests
-from PIL import Image, UnidentifiedImageError
+import subprocess
+from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 import pytesseract
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich import box
 
-# Safe import Maigret
-try:
-    from maigret.maigret import Maigret
-    maigret_available = True
-except ImportError:
-    maigret_available = False
-
-console = Console()
-
-# ------------------------
-# Animation Utility
-# ------------------------
-def animate_print(text, delay=0.02, style="bold cyan"):
-    for char in text:
-        console.print(char, style=style, end="")
-        time.sleep(delay)
-    console.print("")
-
-# ------------------------
-# Metadata
-# ------------------------
-def get_exif_data(image_path):
+# ───────────────────────────────
+# Auto-Installer for Maigret
+# ───────────────────────────────
+def ensure_maigret():
     try:
+        import maigret
+        return maigret
+    except ImportError:
+        print("\n⚠️ Maigret not found. Installing automatically...\n")
+
+        home = os.path.expanduser("~")
+        maigret_path = os.path.join(home, "maigret")
+
+        if not os.path.exists(maigret_path):
+            subprocess.call(["git", "clone", "https://github.com/soxoj/maigret.git", maigret_path])
+
+        requirements = os.path.join(maigret_path, "requirements.txt")
+        if os.path.exists(requirements):
+            subprocess.call([sys.executable, "-m", "pip", "install", "-r", requirements])
+
+        sys.path.append(maigret_path)
+        try:
+            import maigret
+            print("✅ Maigret installed successfully!\n")
+            return maigret
+        except ImportError:
+            print("❌ Failed to load Maigret even after installation.")
+            return None
+
+# ───────────────────────────────
+# EXIF + GPS Extraction
+# ───────────────────────────────
+def get_exif_data(image_path):
+    image = Image.open(image_path)
+    exif_data = {}
+    info = image._getexif()
+    if info:
+        for tag, value in info.items():
+            tag_name = TAGS.get(tag, tag)
+            if tag_name == "GPSInfo":
+                gps_data = {}
+                for t in value:
+                    sub_tag = GPSTAGS.get(t, t)
+                    gps_data[sub_tag] = value[t]
+                exif_data[tag_name] = gps_data
+            else:
+                exif_data[tag_name] = value
+    return exif_data
+
+def convert_to_degrees(value):
+    d, m, s = value
+    return d[0] / d[1] + (m[0] / m[1]) / 60 + (s[0] / s[1]) / 3600
+
+def get_gps_coords(exif_data):
+    gps_info = exif_data.get("GPSInfo", {})
+    if gps_info:
+        lat = gps_info.get("GPSLatitude")
+        lat_ref = gps_info.get("GPSLatitudeRef")
+        lon = gps_info.get("GPSLongitude")
+        lon_ref = gps_info.get("GPSLongitudeRef")
+
+        if lat and lon and lat_ref and lon_ref:
+            lat = convert_to_degrees(lat)
+            lon = convert_to_degrees(lon)
+            if lat_ref != "N":
+                lat = -lat
+            if lon_ref != "E":
+                lon = -lon
+            return lat, lon
+    return None, None
+
+# ───────────────────────────────
+# OCR + Username Finder
+# ───────────────────────────────
+def extract_text(image_path):
+    try:
+        text = pytesseract.image_to_string(Image.open(image_path))
+        return text.strip()
+    except Exception as e:
+        return f"Error extracting text: {e}"
+
+def find_usernames(text):
+    return set(re.findall(r'@?([a-zA-Z0-9._-]{3,20})', text))
+
+# ───────────────────────────────
+# Reverse Image Search
+# ───────────────────────────────
+def reverse_image_search(image_path):
+    print("\n🌐 Launching Reverse Image Search...")
+    webbrowser.open("https://images.google.com/")
+    webbrowser.open("https://yandex.com/images/")
+    webbrowser.open("https://www.bing.com/visualsearch")
+    webbrowser.open("https://tineye.com/")
+    print("✅ Tabs opened: Google, Yandex, Bing, TinEye")
+    print("👉 Upload the image manually for best results.")
+
+# ───────────────────────────────
+# Username OSINT with Maigret
+# ───────────────────────────────
+async def check_usernames(usernames, maigret):
+    if not usernames:
+        print("\n🙅 No usernames found in text/metadata.")
+        return
+
+    print("\n👤 Possible Usernames Found:\n")
+    for u in usernames:
+        print(f"- {u}")
+
+    if maigret is None:
+        print("\n⚠️ Maigret not installed. Skipping username scan.")
+        return
+
+    print("\n🔎 Checking usernames across social media...\n")
+    for username in usernames:
+        try:
+            result = await maigret.search(username, timeout=5)
+            for site, data in result['sites'].items():
+                if data['status'].is_found():
+                    print(f"✅ Found {username} on {site}: {data['url']}")
+        except Exception as e:
+            print(f"⚠️ Error with {username}: {e}")
+
+# ───────────────────────────────
+# Main
+# ───────────────────────────────
+def main():
+    print("╭──────────────────────────────────────────────────────────────╮")
+    print("│               📸 Hardcore OSINT Image Analyzer 🔎                          │")
+    print("╰──────────────────────────────────────────────────────────────╯")
+
+    image_path = input("Enter image path: ").strip()
+    if not os.path.isfile(image_path):
+        print("❌ File not found.")
+        return
+
+    # Load Maigret (auto-install if missing)
+    maigret = ensure_maigret()
+
+    # Metadata
+    exif_data = get_exif_data(image_path)
+    if exif_data:
+        print("\n📸 Extracted Metadata:")
+        for k, v in exif_data.items():
+            print(f"{k}: {v}")
+    else:
+        print("\nNo EXIF metadata found.")
+
+    # GPS
+    lat, lon = get_gps_coords(exif_data)
+    if lat and lon:
+        print(f"\n🌍 GPS Coordinates: {lat}, {lon}")
+        print(f"🔗 Google Maps: https://maps.google.com/?q={lat},{lon}")
+
+    # OCR
+    print("\n🔍 Extracted Text (OCR):\n")
+    text = extract_text(image_path)
+    print(text if text else "No text detected.")
+
+    # Reverse Image Search
+    reverse_image_search(image_path)
+
+    # Username Hunting
+    usernames = find_usernames(text)
+    asyncio.run(check_usernames(usernames, maigret))
+
+    print("\n╭──────────────────────────────────────────────────────────────╮")
+    print("│ Analysis Completed ✅                                        │")
+    print("╰──────────────────────────────────────────────────────────────╯")
+
+    print("\n⚡ Script developed with pride ⚡")
+    print("╭──────────────────────────────────────────────────────────────╮")
+    print("│ by cyber-23priyanshu                                         │")
+    print("╰──────────────────────────────────────────────────────────────╯")
+
+if __name__ == "__main__":
+    main()    try:
         image = Image.open(image_path)
         exif_data = {}
         info = image._getexif()
